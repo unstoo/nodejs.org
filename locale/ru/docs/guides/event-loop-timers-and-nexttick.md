@@ -24,8 +24,16 @@ provided input script (or drops into the [REPL][], which is not covered in
 this document) which may make async API calls, schedule timers, or call
 `process.nextTick()`, then begins processing the event loop.
 
+Когда запускается Node.js, он инициализирует цикл событий, обрабатывает
+предоставленный код, который может сделать асинхронные API вызовы,
+устанавилвает таймеры, или вызывает `process.nextTick()`, затем начинает
+обработку цикла событий.
+
 The following diagram shows a simplified overview of the event loop's
 order of operations.
+
+Следующая диаграмма показывает упрощенное представление последовательньсти
+операций цикла событий.
 
 ```
    ┌───────────────────────────┐
@@ -49,6 +57,7 @@ order of operations.
 ```
 
 *note: each box will be referred to as a "phase" of the event loop.*
+*каждая рамка -- этап в цикле событий* 
 
 Each phase has a FIFO queue of callbacks to execute. While each phase is
 special in its own way, generally, when the event loop enters a given
@@ -58,12 +67,27 @@ exhausted or the maximum number of callbacks has executed. When the
 queue has been exhausted or the callback limit is reached, the event
 loop will move to the next phase, and so on.
 
+Каждая фаза содержит FIFO очередь функций обратного вызова для обработки.
+Хотя каждый этап имеет свои отличия, в общем, когда цикл событий вступает
+в этап, он исполнит все специфические операции для данного этапа, затем
+начнет обрабатывать функции обратного вызова в очереди текущего эатпа
+до тех пор, пока очередь не окажется пустой, или пока не обработает
+максимально разрешимое количество функций обратного вызова. После этого
+цикл событий перейдет к следующему этапу, и так далее.
+
 Since any of these operations may schedule _more_ operations and new
 events processed in the **poll** phase are queued by the kernel, poll
 events can be queued while polling events are being processed. As a
 result, long running callbacks can allow the poll phase to run much
 longer than a timer's threshold. See the [**timers**](#timers) and
 [**poll**](#poll) sections for more details.
+
+Поскольку любая из этих операций может запланнировать _дополнительные_ операции
+и новые события, обработанные на **полл** этапе, поставлены в очередь ядром,
+???????? полл события могут быть отправлены в очередь, пока поллирующие события проходя обработку.  
+В результате, функции обратного вызова могут позволить работатьполл этапу 
+намного дольше чем минимальное значение таймера.
+
 
 _**NOTE:** There is a slight discrepancy between the Windows and the
 Unix/Linux implementation, but that's not important for this
@@ -88,6 +112,11 @@ actually uses - are those above._
 Between each run of the event loop, Node.js checks if it is waiting for
 any asynchronous I/O or timers and shuts down cleanly if there are not
 any.
+
+После каждого повтора цикла событий, Node.js проверяет, не ждет ли тот
+ответа от какого-либо асинхронного I/O или установленного таймера. Если таких
+нет, Node.js завершит свою работу.
+
 
 ## Phases in Detail
 
