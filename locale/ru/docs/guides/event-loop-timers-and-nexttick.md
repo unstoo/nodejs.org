@@ -6,10 +6,15 @@ layout: docs.hbs
 # The Node.js Event Loop, Timers, and `process.nextTick()`
 
 ## What is the Event Loop?
+## Цикл событий - что это?
 
 The event loop is what allows Node.js to perform non-blocking I/O
 operations — despite the fact that JavaScript is single-threaded — by
 offloading operations to the system kernel whenever possible.
+
+Несмотря на однопоточность, Node.js может выполнять неблокирующие I/O операции
+при помощи цикла событий, который делегирует исполнение подобных операций
+ядру операционной системы при любой возможности.
 
 Since most modern kernels are multi-threaded, they can handle multiple
 operations executing in the background. When one of these operations
@@ -17,7 +22,15 @@ completes, the kernel tells Node.js so that the appropriate callback
 may be added to the **poll** queue to eventually be executed. We'll explain
 this in further detail later in this topic.
 
+Поскольку большинство современных ядер являются многопоточными, они
+способны исполнять сразу несколько операций одновременно. Когда одна
+из таких операций заканчивается, ядро сообщает Node.js, что соответствующий
+callback ( _функция обратного вызова_ ) может быть добавлен в **poll** очередь,
+чтобы в конце концов он был исполнен. Мы объясним это более детально в этой
+статье. 
+
 ## Event Loop Explained
+## Цикл событий
 
 When Node.js starts, it initializes the event loop, processes the
 provided input script (or drops into the [REPL][], which is not covered in
@@ -57,7 +70,7 @@ order of operations.
 ```
 
 *note: each box will be referred to as a "phase" of the event loop.*
-*каждая рамка -- этап в цикле событий* 
+*каждая рамка — этап в цикле событий* 
 
 Each phase has a FIFO queue of callbacks to execute. While each phase is
 special in its own way, generally, when the event loop enters a given
@@ -67,13 +80,13 @@ exhausted or the maximum number of callbacks has executed. When the
 queue has been exhausted or the callback limit is reached, the event
 loop will move to the next phase, and so on.
 
-Каждая фаза содержит FIFO очередь функций обратного вызова для обработки.
-Хотя каждый этап имеет свои отличия, в общем, когда цикл событий вступает
-в этап, он исполнит все специфические операции для данного этапа, затем
-начнет обрабатывать функции обратного вызова в очереди текущего эатпа
-до тех пор, пока очередь не окажется пустой, или пока не обработает
-максимально разрешимое количество функций обратного вызова. После этого
-цикл событий перейдет к следующему этапу, и так далее.
+Каждый этап содержит FIFO очередь функций обратного вызова, которую он
+должен обработать. Хотя каждый этап имеет свои отличия, в общем, когда
+цикл событий переходит на очередной этап, он исполняет все специфические
+операции для данного этапа, а затем начнет обрабатывать функции
+обратного вызова в очереди текущего эатпа до тех пор, пока очередь не окажется
+пустой, или пока не обработает максимально разрешенное количество таких функций.
+После этого цикл событий перейдет на следующий этап и так далее.
 
 Since any of these operations may schedule _more_ operations and new
 events processed in the **poll** phase are queued by the kernel, poll
@@ -82,11 +95,11 @@ result, long running callbacks can allow the poll phase to run much
 longer than a timer's threshold. See the [**timers**](#timers) and
 [**poll**](#poll) sections for more details.
 
-Поскольку любая из этих операций может запланнировать _дополнительные_ операции
-и новые события, обработанные на **полл** этапе, поставлены в очередь ядром,
-???????? полл события могут быть отправлены в очередь, пока поллирующие события проходя обработку.  
-В результате, функции обратного вызова могут позволить работатьполл этапу 
-намного дольше чем минимальное значение таймера.
+Поскольку любая из этих операций может запланнировать _дополнительные_ операции,
+новые события, обработанные на **полл** этапе, добавляются ядром в очередь,
+полл события могут быть отправлены в очередь, пока поллирующие события проходя обработку.  
+В результате, продолжительно работающие функции обратного вызова, могут затянуть  работу полл этапа 
+на время, которое заметно превосходит  минимальное время таймера.
 
 
 _**NOTE:** There is a slight discrepancy between the Windows and the
@@ -97,6 +110,7 @@ actually uses - are those above._
 
 
 ## Phases Overview
+## Этапы
 
 * **timers**: this phase executes callbacks scheduled by `setTimeout()`
  and `setInterval()`.
@@ -109,18 +123,33 @@ actually uses - are those above._
 * **check**: `setImmediate()` callbacks are invoked here.
 * **close callbacks**: some close callbacks, e.g. `socket.on('close', ...)`.
 
+* **timers** ( _таймеры_ ): этот этап исполняет функции-обратки запланированные `setTimeout()`
+ и `setInterval()`.
+* **pending callbacks** ( _ожидающие обратки_ ): исполняет функции-обратки I/O,
+исполнение которых было отложено на следующую итерацию цикла событий. 
+* **idle, prepare** ( _ожидание, подготовка_ ): выполняет внутренние работы.
+* **poll** ( _опрос_ ): получает новые I/O события; исполняет функции-обратки, которые
+имеют отношение к I/O операциям (практически все, за исключением тех обраток, что должны
+отработать при событии "close", тех, что были запланированны функциями таймерами и `setImmediate()`).
+* **check** ( _проверка_ ): функции-обратки `setImmediate()` будут вызваны здесь.
+* **close callbacks** ( _функции-обратки "close"_ ): функции-обратки связанные с "close" событиями.
+Например: `socket.on('close', ...)`.
+
+
 Between each run of the event loop, Node.js checks if it is waiting for
 any asynchronous I/O or timers and shuts down cleanly if there are not
 any.
 
-После каждого повтора цикла событий, Node.js проверяет, не ждет ли тот
-ответа от какого-либо асинхронного I/O или установленного таймера. Если таких
-нет, Node.js завершит свою работу.
+После каждого повтора цикла событий, Node.js проверяет, не ждет ли цикл
+ответ от какогой-либо асинхронной I/O операции или от установленного таймера.
+Если таких нет, Node.js завершит свою работу.
 
 
 ## Phases in Detail
+## Этапы в подробностях
 
 ### timers
+### таймеры
 
 A timer specifies the **threshold** _after which_ a provided callback
 _may be executed_ rather than the **exact** time a person _wants it to
@@ -129,18 +158,33 @@ scheduled after the specified amount of time has passed; however,
 Operating System scheduling or the running of other callbacks may delay
 them.
 
+Таймер указывает **минимальное значение** _после которого_ указанная
+функция-обратка _может быть исполнена_, а не **конкретное** время, когда
+программист _хочет, чтобы эта функция была исполнена_. Функции-обратки,
+установленные в таймерах, будут исполнены как можно быстрее, после того
+как прошло минимально указанное значение таймера; однако, планировщик
+ОС или обработка друих функций-обраток может задержать их.
+
 _**Note**: Technically, the [**poll** phase](#poll) controls when timers
 are executed._
+
+_**Замечание**: Технически, [**poll** этап](#poll) контролирует, когда
+таймеры, будут обработанны._
 
 For example, say you schedule a timeout to execute after a 100 ms
 threshold, then your script starts asynchronously reading a file which
 takes 95 ms:
 
+Допустим, вы установили таймер, который должен сработать не раньше
+чем через 100 мс, затем ваш скрипт начинает асинхронно считывать файл,
+что займет 95 мс:
+
 ```js
 const fs = require('fs');
 
 function someAsyncOperation(callback) {
-  // Assume this takes 95ms to complete
+  // Assume this takes 95ms to complet
+  // Допустим эта операция займет 95 мс
   fs.readFile('/path/to/file', callback);
 }
 
@@ -154,12 +198,15 @@ setTimeout(() => {
 
 
 // do someAsyncOperation which takes 95 ms to complete
+// запустить функция someAsyncOperation, которая займет 95 мс
 someAsyncOperation(() => {
   const startCallback = Date.now();
 
   // do something that will take 10ms...
+  // выполняй какую-нибудь работу на протяжении 10 мс
   while (Date.now() - startCallback < 10) {
     // do nothing
+    // ничего не делай
   }
 });
 ```
@@ -176,33 +223,69 @@ the timer's callback. In this example, you will see that the total delay
 between the timer being scheduled and its callback being executed will
 be 105ms.
 
+Когда цикл событий переходит на **poll** этап, его очередь пуста
+(`fs.readFile()` еще не завершился), так что он будет ждать, пока не 
+подойдет минимальное допустимое значение ближайшего таймера. Пока он
+ждет, прошло 95 мс. `fs.readFile()` завершает чтение файла, его
+функция-обратка помещена в **poll** очередь и исполнена. Исполнение
+этой "обратки" занимает 10 мс. Теперь очередь пуста, а цикл событий
+видит, что минимально допустимое значение ближайшего таймера уже прошло.
+Он возвращается обратно на этап **timers**, чтобы исполнить соответсвующую
+"обратку". В данном примере, вы увидите, что общее время задержки между
+установкой таймера и срабатыванием его "обратки" будет равно 105 мс.
+
 Note: To prevent the **poll** phase from starving the event loop, [libuv][]
 (the C library that implements the Node.js
 event loop and all of the asynchronous behaviors of the platform)
 also has a hard maximum (system dependent) before it stops polling for
 more events.
 
+Замечание: Чтобы предотвратить "голодание" цикла событий из-за работы **poll**
+этапа, в [libuv][] (Библиотека Си, посредством которой в Node.js воплощен
+цикл событий и все асинхронные операции платформы) "вшито" ограничение 
+(зависит от системы), достигнув которое он прекращает проверку на наличие новых событий.
+
+
 ### pending callbacks
+### ожидающие функции-обратки
 
 This phase executes callbacks for some system operations such as types
 of TCP errors. For example if a TCP socket receives `ECONNREFUSED` when
 attempting to connect, some \*nix systems want to wait to report the
 error. This will be queued to execute in the **pending callbacks** phase.
 
+Этот этап исполняет функции-обратки для некоторых системных операций,
+таких как виды TCP ошибок. Например, если TCP сокет получает `ECONNREFUSED`
+при попытке подключения, некоторые /*nix системы хотят подождать, прежде
+чем сообщить об ошибке. Их "обратки" будут помещены в очередь этапа **pending callbacks**.
+
 ### poll
+### опрос
 
 The **poll** phase has two main functions:
+Этап **poll** имеет две основные функции:
 
 1. Calculating how long it should block and poll for I/O, then
 2. Processing events in the **poll** queue.
 
+1. Опеределить как долго следует блокировать цикл событий и "слушать" I/O, затем
+2. Обработать события в **poll** очереди.
+
 When the event loop enters the **poll** phase _and there are no timers
 scheduled_, one of two things will happen:
+
+Когда цикл событий переходит на **poll** этап, _а запланированные таймеры
+отсутсвуют_, случится одна из двух вещей:
 
 * _If the **poll** queue **is not empty**_, the event loop will iterate
 through its queue of callbacks executing them synchronously until
 either the queue has been exhausted, or the system-dependent hard limit
 is reached.
+
+* _Если **poll** очередь **непустая**_, цикл событий начнет синхронно
+обрабатывать функции-обратки содержащиеся в ней до тех пор, пока они
+не закончатся, или пока цикл событий не обработает максимально разрешимое
+количество таких функций.
 
 * _If the **poll** queue **is empty**_, one of two more things will
 happen:
@@ -214,21 +297,45 @@ happen:
   event loop will wait for callbacks to be added to the queue, then
   execute them immediately.
 
+* _Если **poll** очередь **пустая**_, одна из еще двух вещей случится:
+  * Если есть скрипты установленные `setImmediate()`, цикл событий
+  завершит **poll** этап и перейдет к **check** этапу, чтобы исполнить эти
+  установленные скрипты.
+
+  * Если скриптов установленных `setImmediate()` **нет**, цикл событий
+  будет ожидать размещения новых функций-обраток в свою очередь, затем
+  исполнит их.
+  
 Once the **poll** queue is empty the event loop will check for timers
 _whose time thresholds have been reached_. If one or more timers are
 ready, the event loop will wrap back to the **timers** phase to execute
 those timers' callbacks.
 
+Когда **poll** очередь окажется пустой, цикл событий проверит, не пришло
+ли время какого-нибудь таймера. Если один или более таймеров готовы,
+цикл событий вернется назад на этап **timers**, чтобы исполнить их "обратки".
+
+
 ### check
+### проверка
 
 This phase allows a person to execute callbacks immediately after the
 **poll** phase has completed. If the **poll** phase becomes idle and
 scripts have been queued with `setImmediate()`, the event loop may
 continue to the **check** phase rather than waiting.
 
+Этот этап позволяет программисту запустить "обратки" сразу же после
+окончания окончания **poll** этапа. Если **poll** этап перешел в режим
+ожидания, а какие-то скрипты были помещенны в очередь посредством `setImmediate()`,
+цикл событий может перейти на **check** этап, вместо того чтобы ждать.
+
 `setImmediate()` is actually a special timer that runs in a separate
 phase of the event loop. It uses a libuv API that schedules callbacks to
 execute after the **poll** phase has completed.
+
+На самом деле `setImmediate()` это специальный таймер, который срабатывает на
+отдельном этапе цикла событий. Он использует API libuv, для плнаирования
+функций-обраток, которые будут исполнены после завершения **poll** этапа. 
 
 Generally, as the code is executed, the event loop will eventually hit
 the **poll** phase where it will wait for an incoming connection, request,
@@ -236,11 +343,22 @@ etc. However, if a callback has been scheduled with `setImmediate()`
 and the **poll** phase becomes idle, it will end and continue to the
 **check** phase rather than waiting for **poll** events.
 
+В общем, по мере исполнения кода, цикл событий дойдет до **poll** этапа,
+на котором он будет ожидать входящие подключения, запросы и т.п. Однако,
+если при помощи `setImmediate()` была установлена некая функция-обратка,
+а **poll** этап перешел в режим ожидания, он будет завершен, цикл событий
+перейдет на **check** этап, вместо того чтобы ожидать **poll** события.
+
 ### close callbacks
+### функции-обратки "close" событий
 
 If a socket or handle is closed abruptly (e.g. `socket.destroy()`), the
 `'close'` event will be emitted in this phase. Otherwise it will be
 emitted via `process.nextTick()`.
+
+Если сокет или обработка обрванна (например, посредством `socket.destroy()`),
+`'close'` событие будет отправленно на этом этапе. Иначе оно будет отправленно
+посредством `process.nextTick()`.
 
 ## `setImmediate()` vs `setTimeout()`
 
