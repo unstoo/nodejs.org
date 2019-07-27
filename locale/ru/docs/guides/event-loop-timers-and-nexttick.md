@@ -478,7 +478,9 @@ Why would something like this be included in Node.js? Part of it is a
 design philosophy where an API should always be asynchronous even where
 it doesn't have to be. Take this code snippet for example:
 
-Зачем подобное включено в Node.js? 
+Зачем подобное включено в Node.js? Часть причины заключается в философии
+дизайна, которая гласит, что API всегда должен оставаться асинхронным, даже
+в там, где он может и не быть таким. Возьмем следующий пример:
 
 ```js
 function apiCall(arg, callback) {
@@ -494,6 +496,12 @@ passing arguments to `process.nextTick()` allowing it to take any
 arguments passed after the callback to be propagated as the arguments to
 the callback so you don't have to nest functions.
 
+Эта функция проверяет аргумент, если аргумент неверный, она передаст
+ошибку в callback-функцию. Чтобы избежать излишней вложенности функций,
+API `process.nextTick()` был недавно обновлен: метод принимает любое количество
+аргументов после callback-функции, которые будут переданы в эту самую callback-функцию.
+
+
 What we're doing is passing an error back to the user but only *after*
 we have allowed the rest of the user's code to execute. By using
 `process.nextTick()` we guarantee that `apiCall()` always runs its
@@ -503,18 +511,31 @@ unwind then immediately execute the provided callback which allows a
 person to make recursive calls to `process.nextTick()` without reaching a
 `RangeError: Maximum call stack size exceeded from v8`.
 
+Мы передаем ошибку обратно пользавателю, но только **после** того как отработал
+его оставшийся код. Применя `process.nextTick()` мы гарантируем, что `apiCall()`
+всегда исполнит свою callback-функцию *после* кода пользователя, но **до** того
+как циклу событий будет разрешено перейти к следующему этапу.
+
+
+
 This philosophy can lead to some potentially problematic situations.
 Take this snippet for example:
+
+Эта философия может привести к потенциально проблемным ситуациям.
+Возьмем следующий отрывок кода:
 
 ```js
 let bar;
 
 // this has an asynchronous signature, but calls callback synchronously
+// у функции асинхронная сигнатура, но callback-функция вызывается синхронно
 function someAsyncApiCall(callback) { callback(); }
 
 // the callback is called before `someAsyncApiCall` completes.
+// callback-функция вызвана до завершения `someAsyncApiCall`
 someAsyncApiCall(() => {
   // since someAsyncApiCall has completed, bar hasn't been assigned any value
+  // поскольку someAsyncApiCall завершилась, перенная bar еще не получила никакое значение
   console.log('bar', bar); // undefined
 });
 
@@ -529,12 +550,26 @@ asynchronously. As a result, the callback tries to reference `bar` even
 though it may not have that variable in scope yet, because the script has not
 been able to run to completion.
 
+?? may not have that variable in scope yet ?? могут не иметь ??
+
+Программист определил `someAsyncApiCall()` с асинхронной сигнатурой, но
+на самом дела она работает синхронно. Когда её вызовут, callback-функция,
+переданная в `someAsyncApiCall()`, будет вызвана на том же этапе цикла событий,
+так как `someAsyncApiCall()` не делает ничего асинхронного. В итоге, callback-функция
+попытается обратиться к `bar`, хотя её значение ещё и не находится в поле видимости 
+(потому что обработка кода не завершилась).
+
 By placing the callback in a `process.nextTick()`, the script still has the
 ability to run to completion, allowing all the variables, functions,
 etc., to be initialized prior to the callback being called. It also has
 the advantage of not allowing the event loop to continue. It may be
 useful for the user to be alerted to an error before the event loop is
 allowed to continue. Here is the previous example using `process.nextTick()`:
+
+Резместив callback-функцию в `process.nextTick()`, код будет обработан до конца.
+Это позволит завершить инициализацию всех переменных, функций и т.п., до вызова
+callback-функции. Еще одно преимущество: цикл событий не продолжит свою работу. что
+может быть использовано для опевещения пользователя об ошибке.
 
 ```js
 let bar;
