@@ -1,16 +1,11 @@
 ---
-title: The Node.js Event Loop, Timers, and process.nextTick()
+title: Цикл событий Node.js, Таймеры и `process.nextTick()
 layout: docs.hbs
 ---
 
-# The Node.js Event Loop, Timers, and `process.nextTick()`
+# Цикл событий Node.js, Таймеры и `process.nextTick()`
 
-## What is the Event Loop?
-## Цикл событий - что это?
-
-The event loop is what allows Node.js to perform non-blocking I/O
-operations — despite the fact that JavaScript is single-threaded — by
-offloading operations to the system kernel whenever possible.
+## Что такое Цикл Событий?
 
 Несмотря на однопоточность, Node.js может выполнять неблокирующие I/O операции
 при помощи цикла событий, который делегирует исполнение подобных операций
@@ -24,13 +19,12 @@ this in further detail later in this topic.
 
 Поскольку большинство современных ядер являются многопоточными, они
 способны исполнять сразу несколько операций одновременно. Когда одна
-из таких операций заканчивается, ядро сообщает Node.js, что соответствующий
-callback ( _функция обратного вызова_ ) может быть добавлен в **poll** очередь,
-чтобы в конце концов он был исполнен. Мы объясним это более детально в этой
-статье. 
+из таких операций заканчивается, ядро сообщает Node.js, что соответствующая
+callback-функция ([функция обратного вызова][https://ru.wikipedia.org/wiki/Callback_(%D0%BF%D1%80%D0%BE%D0%B3%D1%80%D0%B0%D0%BC%D0%BC%D0%B8%D1%80%D0%BE%D0%B2%D0%B0%D0%BD%D0%B8%D0%B5)])  может быть добавлена в очередь **poll** этапа,
+чтобы в конце концов она была исполнена. Далее мы объясним этот процесс более подробно.
 
 ## Event Loop Explained
-## Цикл событий
+## Цикл событий в деталях
 
 When Node.js starts, it initializes the event loop, processes the
 provided input script (or drops into the [REPL][], which is not covered in
@@ -38,38 +32,41 @@ this document) which may make async API calls, schedule timers, or call
 `process.nextTick()`, then begins processing the event loop.
 
 Когда запускается Node.js, он инициализирует цикл событий, обрабатывает
-предоставленный код, который может сделать асинхронные API вызовы,
-устанавилвает таймеры, или вызывает `process.nextTick()`, затем начинает
+предоставленный JS скрипт, который может сделать асинхронные API вызовы,
+установить таймеры или вызвать `process.nextTick()`, затем Node.js начинает
 обработку цикла событий.
-
-The following diagram shows a simplified overview of the event loop's
-order of operations.
 
 Следующая диаграмма показывает упрощенное представление последовательньсти
 операций цикла событий.
 
 ```
-   ┌───────────────────────────┐
-┌─>│           timers          │
+   ┌────────────────────────────┐
+┌─>│           timers           |
+|  |           таймеры          │
+│  └─────────────┬──────────────┘
+│  ┌─────────────┴──────────────┐
+│  │     pending callbacks      |   
+│  | ожидающие callback-функции |
+│  └─────────────┬──────────────┘
+│  ┌─────────────┴──────────────┐
+│  │       idle, prepare        | 
+│  |    ожидание, подготовка    |
+│  └─────────────┬──────────────┘
+│  ┌─────────────┴──────────────┐      ┌───────────────┐      
+│  │           poll             │      │   incoming:   │
+│  │           опрос            │<─────┤  connections, │      
+│  └─────────────┬──────────────┘      │   data, etc.  │
+│  ┌─────────────┴─────────────┐       └───────────────┘
+│  │           check           |
+│  |          проверка         |
 │  └─────────────┬─────────────┘
 │  ┌─────────────┴─────────────┐
-│  │     pending callbacks     │
-│  └─────────────┬─────────────┘
-│  ┌─────────────┴─────────────┐
-│  │       idle, prepare       │
-│  └─────────────┬─────────────┘      ┌───────────────┐
-│  ┌─────────────┴─────────────┐      │   incoming:   │
-│  │           poll            │<─────┤  connections, │
-│  └─────────────┬─────────────┘      │   data, etc.  │
-│  ┌─────────────┴─────────────┐      └───────────────┘
-│  │           check           │
-│  └─────────────┬─────────────┘
-│  ┌─────────────┴─────────────┐
-└──┤      close callbacks      │
+└──┤      close callbacks      |
+   │      callback-функции     |
+   |      "close" событий      |
    └───────────────────────────┘
 ```
 
-*note: each box will be referred to as a "phase" of the event loop.*
 *каждая рамка — этап в цикле событий* 
 
 Each phase has a FIFO queue of callbacks to execute. While each phase is
@@ -80,12 +77,12 @@ exhausted or the maximum number of callbacks has executed. When the
 queue has been exhausted or the callback limit is reached, the event
 loop will move to the next phase, and so on.
 
-Каждый этап содержит FIFO очередь функций обратного вызова, которую он
-должен обработать. Хотя каждый этап имеет свои отличия, в общем, когда
+На каждом этапе есть своя FIFO очередь callback-функций, которые
+нужно обработать. Хотя каждый этап имеет свои отличия, но в общем, когда
 цикл событий переходит на очередной этап, он исполняет все специфические
-операции для данного этапа, а затем начнет обрабатывать функции
-обратного вызова в очереди текущего эатпа до тех пор, пока очередь не окажется
-пустой, или пока не обработает максимально разрешенное количество таких функций.
+операции связанные с этим этапом, а затем обрабатывает callback-функции в его очереди.
+Обработка функций происходит до тех пор, пока очередь не окажется
+пустой или не будет обработано максимально разрешенное количество таких функций.
 После этого цикл событий перейдет на следующий этап и так далее.
 
 Since any of these operations may schedule _more_ operations and new
@@ -95,18 +92,16 @@ result, long running callbacks can allow the poll phase to run much
 longer than a timer's threshold. See the [**timers**](#timers) and
 [**poll**](#poll) sections for more details.
 
-Поскольку любая из этих операций может запланнировать _дополнительные_ операции,
-новые события, обработанные на **полл** этапе, добавляются ядром в очередь,
-полл события могут быть отправлены в очередь, пока поллирующие события проходя обработку.  
+Любая из этих операций может запланировать _дополнительные_ операции. 
+Новые события, обработанные на этапе **опроса**, добавляются ядром в очередь.
+а новые события этого этапа могут быть отправлены в очередь, пока поллирующие события проходя обработку.  
 В результате, продолжительно работающие функции обратного вызова, могут затянуть  работу полл этапа 
-на время, которое заметно превосходит  минимальное время таймера.
+на время, которое заметно превышает минимально допустимое время таймера.
 
-
-_**NOTE:** There is a slight discrepancy between the Windows and the
-Unix/Linux implementation, but that's not important for this
-demonstration. The most important parts are here. There are actually
-seven or eight steps, but the ones we care about — ones that Node.js
-actually uses - are those above._
+_**Замечание:** Существует небольшое различие между релизациями в Windows и
+Unix/Linux, но для данной демонстрации это не важно. Наиболее важные части здесь. 
+На самом деле существует семь или восемь шагов, но значимые, которые использует Node.js,
+те что на схеме выше._
 
 
 ## Phases Overview
@@ -123,17 +118,15 @@ actually uses - are those above._
 * **check**: `setImmediate()` callbacks are invoked here.
 * **close callbacks**: some close callbacks, e.g. `socket.on('close', ...)`.
 
-* **timers** ( _таймеры_ ): этот этап исполняет функции-обратки запланированные `setTimeout()`
+* **timers** ( _таймеры_ ): на этом этапе исполняются callback-функции запланированные `setTimeout()`
  и `setInterval()`.
-* **pending callbacks** ( _ожидающие обратки_ ): исполняет функции-обратки I/O,
-исполнение которых было отложено на следующую итерацию цикла событий. 
+* **pending callbacks** ( _ожидающие callback-функции_ ): тут исполняются callback-функции I/O, исполнение которых было отложено на следующую итерацию цикла. 
 * **idle, prepare** ( _ожидание, подготовка_ ): выполняет внутренние работы.
-* **poll** ( _опрос_ ): получает новые I/O события; исполняет функции-обратки, которые
-имеют отношение к I/O операциям (практически все, за исключением тех обраток, что должны
-отработать при событии "close", тех, что были запланированны функциями таймерами и `setImmediate()`).
-* **check** ( _проверка_ ): функции-обратки `setImmediate()` будут вызваны здесь.
-* **close callbacks** ( _функции-обратки "close"_ ): функции-обратки связанные с "close" событиями.
-Например: `socket.on('close', ...)`.
+* **poll** ( _опрос_ ): получает новые I/O события; исполняет callback-функции, которые
+имеют отношение к I/O операциям (практически все, за исключением тех функций, что должны
+сработать при событии "close", тех, что были запланированны таймерами и `setImmediate()`); node will block here when appropriate.
+* **check** ( _проверка_ ): здесь будут вызваны callback-функции установленные посредством `setImmediate()`.
+* **close callbacks** ( _callback-функции "close"_ ): callback-функции связанные с "close" событиями. Например: `socket.on('close', ...)`.
 
 
 Between each run of the event loop, Node.js checks if it is waiting for
@@ -158,15 +151,12 @@ scheduled after the specified amount of time has passed; however,
 Operating System scheduling or the running of other callbacks may delay
 them.
 
-Таймер указывает **минимальное значение** _после которого_ указанная
-функция-обратка _может быть исполнена_, а не **конкретное** время, когда
-программист _хочет, чтобы эта функция была исполнена_. Функции-обратки,
+Таймер определяет **минимально допустимое значение** _после которого_ указанная
+callback-функция _может быть исполнена_, а не **конкретное** время, когда
+программист _хочет, чтобы эта функция была исполнена_. Callback-функции,
 установленные в таймерах, будут исполнены как можно быстрее, после того
-как прошло минимально указанное значение таймера; однако, планировщик
-ОС или обработка друих функций-обраток может задержать их.
-
-_**Note**: Technically, the [**poll** phase](#poll) controls when timers
-are executed._
+как прошло минимально допустимое значение таймера; однако, планировщик
+ОС или обработка друих callback-функций может задержать их.
 
 _**Замечание**: Технически, [**poll** этап](#poll) контролирует, когда
 таймеры, будут обработанны._
@@ -183,8 +173,7 @@ takes 95 ms:
 const fs = require('fs');
 
 function someAsyncOperation(callback) {
-  // Assume this takes 95ms to complet
-  // Допустим эта операция займет 95 мс
+  // Представьте, что эта операция займет 95 мс
   fs.readFile('/path/to/file', callback);
 }
 
@@ -197,15 +186,12 @@ setTimeout(() => {
 }, 100);
 
 
-// do someAsyncOperation which takes 95 ms to complete
 // запустить функция someAsyncOperation, которая займет 95 мс
 someAsyncOperation(() => {
   const startCallback = Date.now();
 
-  // do something that will take 10ms...
-  // выполняй какую-нибудь работу на протяжении 10 мс
+  // делай какую-нибудь работу на протяжении 10 мс
   while (Date.now() - startCallback < 10) {
-    // do nothing
     // ничего не делай
   }
 });
@@ -223,16 +209,16 @@ the timer's callback. In this example, you will see that the total delay
 between the timer being scheduled and its callback being executed will
 be 105ms.
 
-Когда цикл событий переходит на **poll** этап, его очередь пуста
+Когда цикл событий переходит на этап **опроса**, его очередь пуста
 (`fs.readFile()` еще не завершился), так что он будет ждать, пока не 
 подойдет минимальное допустимое значение ближайшего таймера. Пока он
 ждет, прошло 95 мс. `fs.readFile()` завершает чтение файла, его
-функция-обратка помещена в **poll** очередь и исполнена. Исполнение
-этой "обратки" занимает 10 мс. Теперь очередь пуста, а цикл событий
+callback-функция помещена в очередь **опроса** и исполнена. Исполнение
+этой функции занимает 10 мс. Теперь очередь пуста, а цикл событий
 видит, что минимально допустимое значение ближайшего таймера уже прошло.
-Он возвращается обратно на этап **timers**, чтобы исполнить соответсвующую
-"обратку". В данном примере, вы увидите, что общее время задержки между
-установкой таймера и срабатыванием его "обратки" будет равно 105 мс.
+Он возвращается обратно на этап **таймеров**, чтобы исполнить соответсвующую
+callback-функцию. В данном примере, вы увидите, что общее время задержки между
+установкой таймера и срабатыванием его callback-функции будет равно 105 мс.
 
 Note: To prevent the **poll** phase from starving the event loop, [libuv][]
 (the C library that implements the Node.js
@@ -240,24 +226,24 @@ event loop and all of the asynchronous behaviors of the platform)
 also has a hard maximum (system dependent) before it stops polling for
 more events.
 
-Замечание: Чтобы предотвратить "голодание" цикла событий из-за работы **poll**
-этапа, в [libuv][] (Библиотека Си, посредством которой в Node.js воплощен
+Замечание: Чтобы предотвратить "голодание" цикла событий из-за работы этапа **опроса**, 
+в [libuv][] (Библиотека Си, посредством которой в Node.js реализован
 цикл событий и все асинхронные операции платформы) "вшито" ограничение 
-(зависит от системы), достигнув которое он прекращает проверку на наличие новых событий.
+(зависимое от системы), достигнув которое он прекращает проверку на наличие новых событий.
 
 
 ### pending callbacks
-### ожидающие функции-обратки
+### ожидающие callback-функции
 
 This phase executes callbacks for some system operations such as types
 of TCP errors. For example if a TCP socket receives `ECONNREFUSED` when
 attempting to connect, some \*nix systems want to wait to report the
 error. This will be queued to execute in the **pending callbacks** phase.
 
-Этот этап исполняет функции-обратки для некоторых системных операций,
+Этот этап исполняет callback-функции для некоторых системных операций,
 таких как виды TCP ошибок. Например, если TCP сокет получает `ECONNREFUSED`
-при попытке подключения, некоторые /*nix системы хотят подождать, прежде
-чем сообщить об ошибке. Их "обратки" будут помещены в очередь этапа **pending callbacks**.
+при попытке подключения, некоторые \*nix системы хотят подождать, прежде
+чем сообщить об ошибке. Их callback-функции будут помещены в очередь этапа **ожидающие callback-функции**.
 
 ### poll
 ### опрос
@@ -268,13 +254,13 @@ The **poll** phase has two main functions:
 1. Calculating how long it should block and poll for I/O, then
 2. Processing events in the **poll** queue.
 
-1. Опеределить как долго следует блокировать цикл событий и "слушать" I/O, затем
-2. Обработать события в **poll** очереди.
+1. Опеределить как долго следует блокировать цикл событий и "опрашивать" I/O, затем
+2. Обработать события в очереди **опроса**.
 
 When the event loop enters the **poll** phase _and there are no timers
 scheduled_, one of two things will happen:
 
-Когда цикл событий переходит на **poll** этап, _а запланированные таймеры
+Когда цикл событий переходит на этап **опроса**, _а установленные таймеры
 отсутсвуют_, случится одна из двух вещей:
 
 * _If the **poll** queue **is not empty**_, the event loop will iterate
@@ -282,10 +268,10 @@ through its queue of callbacks executing them synchronously until
 either the queue has been exhausted, or the system-dependent hard limit
 is reached.
 
-* _Если **poll** очередь **непустая**_, цикл событий начнет синхронно
-обрабатывать функции-обратки содержащиеся в ней до тех пор, пока они
-не закончатся, или пока цикл событий не обработает максимально разрешимое
-количество таких функций.
+* _Если очередь опроса **непустая**_, цикл событий начнет синхронно
+обрабатывать очередь callback-функций до тех пор, пока они
+не закончатся, или пока цикл событий не обработает максимально допустимое
+количество callback-функций.
 
 * _If the **poll** queue **is empty**_, one of two more things will
 happen:
@@ -297,13 +283,14 @@ happen:
   event loop will wait for callbacks to be added to the queue, then
   execute them immediately.
 
-* _Если **poll** очередь **пустая**_, одна из еще двух вещей случится:
+* _Если очередь опроса **пустая**_, одна из еще двух вещей 
+случится:
   * Если есть скрипты установленные `setImmediate()`, цикл событий
-  завершит **poll** этап и перейдет к **check** этапу, чтобы исполнить эти
-  установленные скрипты.
+  завершит этап **опроса** и перейдет к этапу **проверки**, чтобы исполнить эти 
+  скрипты.
 
   * Если скриптов установленных `setImmediate()` **нет**, цикл событий
-  будет ожидать размещения новых функций-обраток в свою очередь, затем
+  будет ожидать размещения новых callback-функций в свою очередь, затем
   исполнит их.
   
 Once the **poll** queue is empty the event loop will check for timers
@@ -311,9 +298,9 @@ _whose time thresholds have been reached_. If one or more timers are
 ready, the event loop will wrap back to the **timers** phase to execute
 those timers' callbacks.
 
-Когда **poll** очередь окажется пустой, цикл событий проверит, не пришло
+Когда очередь **опроса** окажется пустой, цикл событий проверит, не подошло
 ли время какого-нибудь таймера. Если один или более таймеров готовы,
-цикл событий вернется назад на этап **timers**, чтобы исполнить их "обратки".
+цикл событий вернется назад на этап **таймеров**, чтобы исполнить их callback-функции.
 
 
 ### check
@@ -324,18 +311,18 @@ This phase allows a person to execute callbacks immediately after the
 scripts have been queued with `setImmediate()`, the event loop may
 continue to the **check** phase rather than waiting.
 
-Этот этап позволяет программисту запустить "обратки" сразу же после
-окончания окончания **poll** этапа. Если **poll** этап перешел в режим
+Этот этап позволяет программисту запустить callback-функции сразу же после
+окончания окончания этапа **опроса**. Если этап **опроса** перешел в режим
 ожидания, а какие-то скрипты были помещенны в очередь посредством `setImmediate()`,
-цикл событий может перейти на **check** этап, вместо того чтобы ждать.
+цикл событий может перейти на этап **проверки**, вместо того чтобы ждать.
 
 `setImmediate()` is actually a special timer that runs in a separate
 phase of the event loop. It uses a libuv API that schedules callbacks to
 execute after the **poll** phase has completed.
 
 На самом деле `setImmediate()` это специальный таймер, который срабатывает на
-отдельном этапе цикла событий. Он использует API libuv, для плнаирования
-функций-обраток, которые будут исполнены после завершения **poll** этапа. 
+отдельном этапе цикла событий. Он использует API libuv для установки
+callback-функций, которые будут исполнены после завершения этапа **опроса**. 
 
 Generally, as the code is executed, the event loop will eventually hit
 the **poll** phase where it will wait for an incoming connection, request,
@@ -343,42 +330,56 @@ etc. However, if a callback has been scheduled with `setImmediate()`
 and the **poll** phase becomes idle, it will end and continue to the
 **check** phase rather than waiting for **poll** events.
 
-В общем, по мере исполнения кода, цикл событий дойдет до **poll** этапа,
-на котором он будет ожидать входящие подключения, запросы и т.п. Однако,
-если при помощи `setImmediate()` была установлена некая функция-обратка,
-а **poll** этап перешел в режим ожидания, он будет завершен, цикл событий
-перейдет на **check** этап, вместо того чтобы ожидать **poll** события.
+В общем, по мере исполнения кода, цикл событий дойдет до этапа **опроса**,
+на котором он будет ожидать входящие подключения, запросы и т.п. операции.
+Однако, если при помощи `setImmediate()` была установлена callback-функция,
+а этап **опроса** перешел в режим ожидания, он будет завершен, цикл событий
+перейдет на этап **проверки**, вместо того чтобы ожидать события **опроса**.
 
 ### close callbacks
-### функции-обратки "close" событий
+### callback-функции событий 'close' 
 
 If a socket or handle is closed abruptly (e.g. `socket.destroy()`), the
 `'close'` event will be emitted in this phase. Otherwise it will be
 emitted via `process.nextTick()`.
 
-Если сокет или обработка обрванна (например, посредством `socket.destroy()`),
-`'close'` событие будет отправленно на этом этапе. Иначе оно будет отправленно
+Если сокет или обработка "оборванна" (например, посредством `socket.destroy()`),
+событие `'close'` будет отправленно на этом этапе. Иначе оно будет отправленно
 посредством `process.nextTick()`.
 
 ## `setImmediate()` vs `setTimeout()`
+## `setImmediate()` против `setTimeout()`
 
 `setImmediate()` and `setTimeout()` are similar, but behave in different
 ways depending on when they are called.
+`setImmediate()` и `setTimeout()` похожи, но ведут себя поразному в зависимости
+от того когда они вызваны.
 
 * `setImmediate()` is designed to execute a script once the
 current **poll** phase completes.
 * `setTimeout()` schedules a script to be run after a minimum threshold
 in ms has elapsed.
+* `setImmediate()` спроектирован для исполнения скрипта после завершения текущего этапа **опрос**.
+current **poll** phase completes.
+* `setTimeout()` устанавливает скрипт, который будет исполнен по прошествию минимально допустимого значения в миллисекундах.
 
 The order in which the timers are executed will vary depending on the
 context in which they are called. If both are called from within the
 main module, then timing will be bound by the performance of the process
 (which can be impacted by other applications running on the machine).
 
+Порядок исполнения таймеров будет зависить от контекста, в котором они вызваны.
+Если оба вызваны в основном модуле, тогда время срабатывания будет зависеть
+от производительности процесса (которая зависит от исполняющихся)
+
 For example, if we run the following script which is not within an I/O
 cycle (i.e. the main module), the order in which the two timers are
 executed is non-deterministic, as it is bound by the performance of the
 process:
+
+Например, если мы запустим нижеследующий скрипт, который расположен
+вне I/O цикла, а в основном модуле, порядок в котором таймеры будут
+исполнены не определен, поскольку он зависит от производительности процесса:
 
 
 ```js
@@ -404,6 +405,8 @@ timeout
 
 However, if you move the two calls within an I/O cycle, the immediate
 callback is always executed first:
+Однако, если вы разместита оба вызова внутри I/O цикла, callback-функция,
+установленная в setImmediate(), всегда исполняется первой:
 
 ```js
 // timeout_vs_immediate.js
@@ -429,13 +432,14 @@ immediate
 timeout
 ```
 
-The main advantage to using `setImmediate()` over `setTimeout()` is
-`setImmediate()` will always be executed before any timers if scheduled
-within an I/O cycle, independently of how many timers are present.
+Основное преимущество `setImmediate()` перед `setTimeout()` заключается в том,
+что внутри I/O цикла `setImmediate()` всегда исполнится в первую очередь вне зависимости от того,
+сколько таймеров было установлено.
 
 ## `process.nextTick()`
 
 ### Understanding `process.nextTick()`
+### Объяснение `process.nextTick()`
 
 You may have noticed that `process.nextTick()` was not displayed in the
 diagram, even though it's a part of the asynchronous API. This is because
@@ -446,6 +450,13 @@ an *operation* is defined as a transition from the
 underlying C/C++ handler, and handling the JavaScript that needs to be
 executed.
 
+Вы могли заметить, что `process.nextTick()` не обозначен на диаграмме, хотя
+он является частью асинхронного API. Причина в том, что `process.nextTick()`
+технически не является частью цикла событий. Очередь `nextTickQueue` будет обработана после
+завершения текущей операции, безотносительно того на каком этапе находится цикл событий.
+**Операцией** здесь означает переход от лежащего в основе обработчика C/C++ к
+JS коду, который необходимо исполнить.
+
 Looking back at our diagram, any time you call `process.nextTick()` in a
 given phase, all callbacks passed to `process.nextTick()` will be
 resolved before the event loop continues. This can create some bad
@@ -453,11 +464,21 @@ situations because **it allows you to "starve" your I/O by making
 recursive `process.nextTick()` calls**, which prevents the event loop
 from reaching the **poll** phase.
 
+Обратимся к нашей диаграмме. Не важно на каком этапе цикла событий и в какой
+момент вызван `process.nextTick()`, все callback-функции, переданные этому
+методу, будут исполнены до перехода на следующий этап. **Здесь кроется опасность**,
+можно так зациклить вызовы `process.nextTick()`, что они не позволят циклу событий
+перейти на этап **опроса**. Это, в свою очередь, приведет к "голоданию" I/O операций. 
+
+
 ### Why would that be allowed?
+### Зачем это разрешено?
 
 Why would something like this be included in Node.js? Part of it is a
 design philosophy where an API should always be asynchronous even where
 it doesn't have to be. Take this code snippet for example:
+
+Зачем подобное включено в Node.js? 
 
 ```js
 function apiCall(arg, callback) {
